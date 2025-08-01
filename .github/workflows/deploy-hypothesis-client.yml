@@ -145,12 +145,12 @@ jobs:
             echo "=== Image Information ==="
             docker images | grep hypothesis-client
 
-            # echo "=== Test hypothesis-client endpoints ==="
-            # echo "Testing health endpoint..."
-            # curl -f http://localhost:8080/health || echo "Health endpoint test failed"
+            echo "=== Test hypothesis-client endpoints ==="
+            echo "Testing health endpoint..."
+            curl -f http://${{ secrets.SUBDOMAIN_HYPOTHESIS }}.${{ secrets.DOMAIN_NAME }}/health || echo "Health endpoint test failed"
             
-            # echo "Testing boot.js endpoint..."
-            # curl -f -I http://localhost:8080/boot.js || echo "boot.js endpoint test failed"
+            echo "Testing boot.js endpoint..."
+            curl -f -I http://${{ secrets.SUBDOMAIN_HYPOTHESIS }}.${{ secrets.DOMAIN_NAME }}/boot.js || echo "boot.js endpoint test failed"
 
             echo "=== Hypothesis Client Deployment completed at \$(date -u) ==="
-          EOF 
+          EOF

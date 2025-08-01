@@ -1,0 +1,138 @@
+name: Deploy Hypothesis Client
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'Dockerfile'
+      - 'nginx.conf'
+      - '.github/workflows/deploy-hypothesis-client.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/hypothesis-client
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for Git info
+
+      - name: Set lowercase image name
+        run: |
+          echo "LOWERCASE_IMAGE_NAME=$(echo ${{ github.repository }}/hypothesis-client | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build Hypothesis client
+        run: yarn build
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.LOWERCASE_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix={{date 'YYYYMMDD'}}-
+
+      - name: Build and push Docker image to GitHub Container Registry (GHCR)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.LOWERCASE_IMAGE_NAME }}:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Set up SSH
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          # Debug information
+          echo "Starting SSH setup..."
+          
+          # Create .ssh directory with proper permissions
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Write the SSH key
+          echo "${{ secrets.VPS_N8N_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Add known hosts
+          ssh-keyscan -p 2222 -H ${{ secrets.VPS_N8N_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+          
+          # Debug SSH configuration
+          ls -la ~/.ssh
+          
+          # Test SSH connection
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_N8N_USER }}@${{ secrets.VPS_N8N_IP }} 'echo "SSH connection test successful"'
+
+      - name: Deploy to VPS
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_N8N_USER }}@${{ secrets.VPS_N8N_IP }} <<EOF
+            echo "=== Hypothesis Client Deployment started at \$(date -u) ==="
+
+            echo "=== Docker login ==="
+            docker login ghcr.io -u "$GHCR_USERNAME" -p "$GHCR_TOKEN" || { echo "Docker login failed"; exit 1; }
+
+            echo "=== Pull latest hypothesis-client image ==="
+            docker pull ghcr.io/xanore/hypothesis-client:latest || { echo "Image pull failed"; exit 1; }
+
+            echo "=== Stop and remove existing hypothesis-client container ==="
+            cd /root || { echo "Project folder not found!"; exit 1; }
+            docker compose stop hypothesis-client || echo "Container not running"
+            docker compose rm -f hypothesis-client || echo "Container remove failed or already removed"
+
+            echo "=== Start updated hypothesis-client container ==="
+            docker compose up -d hypothesis-client || { echo "Failed to start container"; exit 1; }
+
+            echo "=== Container Status ==="
+            docker ps --filter "name=hypothesis-client"
+
+            echo "=== Container Health Check ==="
+            docker inspect --format='{{json .State.Health}}' \$(docker ps -qf "name=hypothesis-client") 2>/dev/null || echo "Health info not available"
+
+            echo "=== Container Logs (last 30 lines) ==="
+            docker logs --tail 30 \$(docker ps -qf "name=hypothesis-client") 2>/dev/null || echo "No logs available yet"
+
+            echo "=== Image Information ==="
+            docker images | grep hypothesis-client
+
+            echo "=== Test hypothesis-client endpoints ==="
+            echo "Testing health endpoint..."
+            curl -f http://localhost:8080/health || echo "Health endpoint test failed"
+            
+            echo "Testing boot.js endpoint..."
+            curl -f -I http://localhost:8080/boot.js || echo "boot.js endpoint test failed"
+
+            echo "=== Hypothesis Client Deployment completed at \$(date -u) ==="
+          EOF 

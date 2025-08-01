@@ -2,9 +2,9 @@ name: Continuous integration
 on:
   pull_request:
   workflow_call:
-    secrets:
-      CODECOV_TOKEN:
-        required: true
+    # secrets:
+    #   CODECOV_TOKEN:
+    #     required: false  # Make it optional
   workflow_dispatch:
 jobs:
   ci:
@@ -28,8 +28,9 @@ jobs:
         yarn typecheck
     - name: Test
       run: yarn test
-    - name: Upload coverage report
-      uses: codecov/codecov-action@v4
-      with:
-        files: ./coverage/coverage-final.json
-        token: ${{ secrets.CODECOV_TOKEN }}
+    # - name: Upload coverage report (optional)
+    #   if: ${{ secrets.CODECOV_TOKEN }}
+    #   uses: codecov/codecov-action@v4
+    #   with:
+    #     files: ./coverage/coverage-final.json
+    #     token: ${{ secrets.CODECOV_TOKEN }}
